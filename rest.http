@@ -1,0 +1,5 @@
+GET http://localhost:3000
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2N2EzZWNlYTEyOTVhZTk4MjBhYTFhZWYiLCJpYXQiOjE3Mzg3OTYyNjYsImV4cCI6MTczODc5NzE2Nn0.tBUtsi9he0WruxKeL0xovB5sh7-hC3DJRvH1Utdb3j8
+
+###-----------------------------------------ping route-----------------------------------------
+GET http://localhost:3000/api/ping
