@@ -1,7 +1,10 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import axios from 'axios';
 import { generateRandomPassword, generateRandomPin } from '../utils/helpers';
+import { AuthenticatedRequest, Auth0User, getAuth0UserProfile } from '../middlewares/auth';
+import User, { IUser, Auth0UserData } from '../models/user_model';
 
 // Types
 interface AuthRequest extends Request {
@@ -440,32 +443,29 @@ export const changePassword = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    // TODO: Get user from database
-    // const user = await User.findById(userId);
-    // if (!user) {
-    //   res.status(404).json({
-    //     success: false,
-    //     message: 'User not found'
-    //   });
-    //   return;
-    // }
+    // Get user from database
+    const user = await User.findById(userId);
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+      return;
+    }
 
-    // TODO: Verify current password
-    // const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
-    // if (!isCurrentPasswordValid) {
-    //   res.status(400).json({
-    //     success: false,
-    //     message: 'Current password is incorrect'
-    //   });
-    //   return;
-    // }
+    // Verify current password
+    const isCurrentPasswordValid = await user.isValidPassword(currentPassword);
+    if (!isCurrentPasswordValid) {
+      res.status(400).json({
+        success: false,
+        message: 'Current password is incorrect'
+      });
+      return;
+    }
 
-    // Hash new password
-    const saltRounds = 12;
-    const hashedNewPassword = await bcrypt.hash(newPassword, saltRounds);
-
-    // TODO: Update password in database
-    // await User.findByIdAndUpdate(userId, { password: hashedNewPassword });
+    // Update password
+    user.password = newPassword;  // Will be hashed by pre-save middleware
+    await user.save();
 
     res.status(200).json({
       success: true,
@@ -474,6 +474,271 @@ export const changePassword = async (req: AuthRequest, res: Response): Promise<v
 
   } catch (error: any) {
     console.error('Change password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// ========================
+// AUTH0 CONTROLLERS
+// ========================
+
+/**
+ * Auth0 callback handler - processes Auth0 user after successful authentication
+ */
+export const auth0Callback = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.userId || !req.user) {
+      res.status(401).json({
+        success: false,
+        message: 'Authentication failed'
+      });
+      return;
+    }
+
+    // Find or create user in our database
+    const user = await User.findOrCreateFromAuth0(req.user as Auth0UserData);
+
+    res.status(200).json({
+      success: true,
+      message: 'Authentication successful',
+      data: {
+        user: {
+          id: user._id,
+          auth0Id: user.auth0Id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          picture: user.auth0Data?.picture,
+          emailVerified: user.auth0Data?.email_verified,
+          lastLogin: user.lastLogin
+        }
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Auth0 callback error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Get current user profile (protected route)
+ */
+export const getProfile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+      return;
+    }
+
+    // Find user by Auth0 ID
+    const user = await User.findOne({ auth0Id: req.userId });
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        user: {
+          id: user._id,
+          auth0Id: user.auth0Id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          username: user.username,
+          phoneNumber: user.phoneNumber,
+          picture: user.auth0Data?.picture,
+          emailVerified: user.auth0Data?.email_verified,
+          isActive: user.isActive,
+          lastLogin: user.lastLogin,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt
+        }
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Get profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Update user profile (protected route)
+ */
+export const updateProfile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+      return;
+    }
+
+    const { firstName, lastName, username, phoneNumber } = req.body;
+
+    // Find user by Auth0 ID
+    const user = await User.findOne({ auth0Id: req.userId });
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+      return;
+    }
+
+    // Update allowed fields
+    if (firstName !== undefined) user.firstName = firstName;
+    if (lastName !== undefined) user.lastName = lastName;
+    if (username !== undefined) user.username = username;
+    if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: {
+        user: {
+          id: user._id,
+          auth0Id: user.auth0Id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          username: user.username,
+          phoneNumber: user.phoneNumber,
+          picture: user.auth0Data?.picture,
+          emailVerified: user.auth0Data?.email_verified,
+          updatedAt: user.updatedAt
+        }
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Update profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Sync user data from Auth0 Management API (protected route)
+ */
+export const syncAuth0Profile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+      return;
+    }
+
+    // Get fresh user data from Auth0
+    const auth0User = await getAuth0UserProfile(req.userId);
+    if (!auth0User) {
+      res.status(404).json({
+        success: false,
+        message: 'Auth0 user not found'
+      });
+      return;
+    }
+
+    // Find local user
+    const user = await User.findOne({ auth0Id: req.userId });
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        message: 'Local user not found'
+      });
+      return;
+    }
+
+    // Sync data
+    user.syncFromAuth0(auth0User as Auth0UserData);
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile synced successfully',
+      data: {
+        user: {
+          id: user._id,
+          auth0Id: user.auth0Id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          picture: user.auth0Data?.picture,
+          emailVerified: user.auth0Data?.email_verified,
+          lastLogin: user.lastLogin,
+          updatedAt: user.updatedAt
+        }
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Sync Auth0 profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Delete user account (protected route)
+ */
+export const deleteAccount = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+      return;
+    }
+
+    // Find user by Auth0 ID
+    const user = await User.findOne({ auth0Id: req.userId });
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+      return;
+    }
+
+    // Soft delete - just mark as inactive
+    user.isActive = false;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Account deactivated successfully'
+    });
+
+  } catch (error: any) {
+    console.error('Delete account error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'

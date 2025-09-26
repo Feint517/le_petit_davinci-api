@@ -6,7 +6,7 @@ import userRoutes from './routes/user_routes';
 import apiRoutes from './routes/api_routes';
 // import teamRoutes from './routes/teams_routes';
 // import projectRoutes from './routes/projects_routes';
-import { verifyAccessToken } from './middlewares/auth';
+import { verifyAccessToken, verifyAuth0Token } from './middlewares/auth';
 // import { cleanupExpiredTokens } from './cron/cleanupTokens';
 import initMongoDB from './utils/init_mongodb';
 // import './cron/changeSecrets';
@@ -43,14 +43,29 @@ app.get('/test', (req: Request, res: Response): void => {
     res.json({ message: 'Test route working!' });
 });
 
-// Protected root route example (temporarily disabled for testing)
-// app.get('/', verifyAccessToken, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-//     res.json({
-//         success: true,
-//         message: 'Hello from Le Petit Davinci API',
-//         user: (req as any).userId
-//     });
-// });
+// Protected root route with Auth0
+app.get('/', verifyAuth0Token, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const authReq = req as any;
+    res.json({
+        success: true,
+        message: 'Hello from Le Petit Davinci API with Auth0',
+        user: {
+            id: authReq.userId,
+            email: authReq.user?.email,
+            name: authReq.user?.name
+        },
+        timestamp: new Date().toISOString()
+    });
+});
+
+// Legacy protected route (for backward compatibility)
+app.get('/legacy', verifyAccessToken, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    res.json({
+        success: true,
+        message: 'Hello from Le Petit Davinci API (Legacy)',
+        user: (req as any).userId
+    });
+});
 
 //* 404 handler - route not found
 app.use(async (req: Request, res: Response, next: NextFunction): Promise<void> => {
