@@ -10,24 +10,24 @@ interface AuthenticatedRequest extends Request {
     user?: Auth0User;
     auth?: {
         sub: string;
-        aud: string;
+        aud: string | string[];
         iat: number;
         exp: number;
-        azp?: string;
-        scope?: string;
+        azp?: string | undefined;
+        scope?: string | undefined;
     };
 }
 
 // Auth0 User interface
 interface Auth0User {
     sub: string;
-    email?: string;
-    name?: string;
-    picture?: string;
-    email_verified?: boolean;
-    nickname?: string;
-    given_name?: string;
-    family_name?: string;
+    email?: string | undefined;
+    name?: string | undefined;
+    picture?: string | undefined;
+    email_verified?: boolean | undefined;
+    nickname?: string | undefined;
+    given_name?: string | undefined;
+    family_name?: string | undefined;
 }
 
 // Define the JWT payload structure for Auth0
@@ -120,7 +120,7 @@ export const verifyAuth0Token = async (
         req.userId = decoded.sub;
         req.auth = {
             sub: decoded.sub,
-            aud: Array.isArray(decoded.aud) ? decoded.aud[0] : decoded.aud,
+            aud: decoded.aud,
             iat: decoded.iat,
             exp: decoded.exp,
             azp: decoded.azp,
@@ -131,13 +131,13 @@ export const verifyAuth0Token = async (
         if (decoded.email || decoded.name) {
             req.user = {
                 sub: decoded.sub,
-                email: decoded.email,
-                name: decoded.name,
-                picture: decoded.picture,
-                email_verified: decoded.email_verified,
-                nickname: decoded.nickname,
-                given_name: decoded.given_name,
-                family_name: decoded.family_name
+                email: decoded.email || undefined,
+                name: decoded.name || undefined,
+                picture: decoded.picture || undefined,
+                email_verified: decoded.email_verified || undefined,
+                nickname: decoded.nickname || undefined,
+                given_name: decoded.given_name || undefined,
+                family_name: decoded.family_name || undefined
             };
         }
 

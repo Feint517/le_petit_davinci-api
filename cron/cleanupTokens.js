@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const User = require('../models/user_model');
+const { cleanupExpiredPins } = require('../utils/pinStorage');
 
 //* Function to clean up expired tokens
 const cleanupExpiredTokens = async () => {
@@ -17,6 +18,13 @@ const cleanupExpiredTokens = async () => {
         console.log('Expired tokens cleaned up');
     } catch (err) {
         console.error('Error during token cleanup:', err);
+    }
+
+    // Clean up expired PINs
+    try {
+        cleanupExpiredPins();
+    } catch (err) {
+        console.error('Error during PIN cleanup:', err);
     }
 };
 

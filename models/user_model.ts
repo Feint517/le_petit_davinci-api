@@ -1,4 +1,4 @@
-import mongoose, { Document, Schema } from 'mongoose';
+import supabase from '../utils/init_supabase';
 import bcrypt from 'bcryptjs';
 
 // Auth0 User interface
@@ -15,227 +15,308 @@ export interface Auth0UserData {
     last_login?: Date;
 }
 
-// User interface extending Document for Mongoose
-export interface IUser extends Document {
-    // Traditional fields (keep for backward compatibility)
-    firstName?: string;
-    lastName?: string;
-    username?: string;
+// User interface for Supabase
+export interface IUser {
+    id?: string;
+    // Core user fields
+    firstName?: string | undefined;
+    lastName?: string | undefined;
     email: string;
-    phoneNumber?: string;
-    password?: string;
-    pin1?: string;
-    pin2?: string;
-    refreshToken?: string;
-    refreshTokenExpiresAt?: Date;
+    password?: string | undefined;
+    
+    // Token fields
+    refreshToken?: string | undefined;
+    refreshTokenExpiresAt?: Date | undefined;
 
     // Auth0 specific fields
     auth0Id: string;  // Auth0 sub field
-    auth0Data?: Auth0UserData;
+    auth0Data?: Auth0UserData | undefined;
 
     // Additional user fields
     isActive: boolean;
-    createdAt: Date;
-    updatedAt: Date;
-    lastLogin?: Date;
-
-    // Instance methods
-    isValidPassword(password: string): Promise<boolean>;
-    isPinValid(pin1: string, pin2: string): Promise<boolean>;
-    syncFromAuth0(auth0User: Auth0UserData): void;
+    createdAt?: Date | undefined;
+    updatedAt?: Date | undefined;
+    lastLogin?: Date | undefined;
 }
 
-// User schema
-const userSchema: Schema<IUser> = new Schema({
-    // Traditional fields (backward compatibility)
-    firstName: {
-        type: String,
-        required: false,
-        trim: true
-    },
-    lastName: {
-        type: String,
-        required: false,
-        trim: true
-    },
-    username: {
-        type: String,
-        required: false,
-        unique: true,
-        sparse: true,
-        trim: true
-    },
-    email: {
-        type: String,
-        required: true,
-        unique: true,
-        lowercase: true,
-        trim: true,
-        index: true
-    },
-    phoneNumber: {
-        type: String,
-        required: false,
-        trim: true
-    },
-    password: {
-        type: String,
-        required: false  // Not required for Auth0 users
-    },
-    pin1: {
-        type: String,
-        required: false
-    },
-    pin2: {
-        type: String,
-        required: false
-    },
-    refreshToken: {
-        type: String,
-        required: false
-    },
-    refreshTokenExpiresAt: {
-        type: Date,
-        required: false
-    },
+// User class with methods
+export class User {
+    private data: IUser;
 
-    // Auth0 specific fields
-    auth0Id: {
-        type: String,
-        required: true,
-        unique: true,
-        index: true
-    },
-    auth0Data: {
-        sub: { type: String, required: true },
-        email: { type: String },
-        name: { type: String },
-        picture: { type: String },
-        email_verified: { type: Boolean, default: false },
-        nickname: { type: String },
-        given_name: { type: String },
-        family_name: { type: String },
-        updated_at: { type: String },
-        last_login: { type: Date }
-    },
-
-    // Additional fields
-    isActive: {
-        type: Boolean,
-        default: true
-    },
-    lastLogin: {
-        type: Date
+    constructor(data: IUser) {
+        this.data = data;
     }
-}, {
-    timestamps: true,  // Automatically adds createdAt and updatedAt
-    toJSON: {
-        transform: function(doc, ret) {
-            // Remove sensitive fields from JSON output
-            delete ret.password;
-            delete ret.pin1;
-            delete ret.pin2;
-            delete ret.refreshToken;
-            delete ret.__v;
-            return ret;
+
+    // Getter methods
+    get _id() { return this.data.id; }
+    get firstName() { return this.data.firstName; }
+    get lastName() { return this.data.lastName; }
+    get email() { return this.data.email; }
+    get auth0Id() { return this.data.auth0Id; }
+    get auth0Data() { return this.data.auth0Data; }
+    get isActive() { return this.data.isActive; }
+    get createdAt() { return this.data.createdAt; }
+    get updatedAt() { return this.data.updatedAt; }
+    get lastLogin() { return this.data.lastLogin; }
+    get refreshToken() { return this.data.refreshToken; }
+    get refreshTokenExpiresAt() { return this.data.refreshTokenExpiresAt; }
+
+    // Setter methods
+    set firstName(value: string | undefined) { this.data.firstName = value; }
+    set lastName(value: string | undefined) { this.data.lastName = value; }
+    set password(value: string | undefined) { this.data.password = value; }
+    set isActive(value: boolean) { this.data.isActive = value; }
+    set refreshToken(value: string | undefined) { this.data.refreshToken = value; }
+    set refreshTokenExpiresAt(value: Date | undefined) { this.data.refreshTokenExpiresAt = value; }
+    set lastLogin(value: Date | undefined) { this.data.lastLogin = value; }
+
+    /**
+     * Validate password
+     */
+    async isValidPassword(password: string): Promise<boolean> {
+        if (!this.data.password) return false;
+        return await bcrypt.compare(password, this.data.password);
+    }
+
+
+    /**
+     * Sync user data from Auth0
+     */
+    syncFromAuth0(auth0User: Auth0UserData): void {
+        this.data.auth0Data = auth0User;
+        this.data.email = auth0User.email || this.data.email;
+
+        // Update name fields if available
+        if (auth0User.given_name && !this.data.firstName) {
+            this.data.firstName = auth0User.given_name;
         }
-    }
-});
-
-// Index for Auth0 ID
-userSchema.index({ auth0Id: 1 });
-userSchema.index({ email: 1 });
-userSchema.index({ 'auth0Data.sub': 1 });
-
-// Pre-save middleware for password hashing
-userSchema.pre<IUser>('save', async function (next) {
-    const user = this;
-
-    try {
-        // Hash password if modified
-        if (user.isModified('password') && user.password) {
-            const salt = await bcrypt.genSalt(12);
-            user.password = await bcrypt.hash(user.password, salt);
+        if (auth0User.family_name && !this.data.lastName) {
+            this.data.lastName = auth0User.family_name;
         }
 
-        // Hash pins if modified
-        if (user.isModified('pin1') && user.pin1) {
-            const salt = await bcrypt.genSalt(12);
-            user.pin1 = await bcrypt.hash(user.pin1, salt);
+        this.data.lastLogin = new Date();
+        if (this.data.auth0Data) {
+            this.data.auth0Data.last_login = new Date();
         }
+    }
 
-        if (user.isModified('pin2') && user.pin2) {
-            const salt = await bcrypt.genSalt(12);
-            user.pin2 = await bcrypt.hash(user.pin2, salt);
+    /**
+     * Convert camelCase to snake_case for database
+     */
+    private static toDatabaseFormat(data: IUser): any {
+        return {
+            id: data.id,
+            first_name: data.firstName,
+            last_name: data.lastName,
+            email: data.email,
+            password: data.password,
+            refresh_token: data.refreshToken,
+            refresh_token_expires_at: data.refreshTokenExpiresAt,
+            auth0_id: data.auth0Id,
+            auth0_data: data.auth0Data,
+            is_active: data.isActive,
+            last_login: data.lastLogin,
+            created_at: data.createdAt,
+            updated_at: data.updatedAt
+        };
+    }
+
+    /**
+     * Convert snake_case to camelCase from database
+     */
+    private static fromDatabaseFormat(data: any): IUser {
+        return {
+            id: data.id,
+            firstName: data.first_name,
+            lastName: data.last_name,
+            email: data.email,
+            password: data.password,
+            refreshToken: data.refresh_token,
+            refreshTokenExpiresAt: data.refresh_token_expires_at,
+            auth0Id: data.auth0_id,
+            auth0Data: data.auth0_data,
+            isActive: data.is_active,
+            lastLogin: data.last_login,
+            createdAt: data.created_at,
+            updatedAt: data.updated_at
+        };
+    }
+
+    /**
+     * Save user to Supabase
+     */
+    async save(): Promise<IUser> {
+        try {
+            // Hash password if it's being set/modified and not already hashed
+            if (this.data.password && !this.data.password.startsWith('$2')) {
+                const salt = await bcrypt.genSalt(12);
+                this.data.password = await bcrypt.hash(this.data.password, salt);
+            }
+
+            const dbData = User.toDatabaseFormat(this.data);
+
+            if (this.data.id) {
+                // Update existing user
+                dbData.updated_at = new Date();
+                const { data, error } = await supabase
+                    .from('users')
+                    .update(dbData)
+                    .eq('id', this.data.id)
+                    .select()
+                    .single();
+
+                if (error) throw error;
+                this.data = User.fromDatabaseFormat(data);
+                return this.data;
+            } else {
+                // Create new user
+                dbData.created_at = new Date();
+                dbData.updated_at = new Date();
+                const { data, error } = await supabase
+                    .from('users')
+                    .insert(dbData)
+                    .select()
+                    .single();
+
+                if (error) throw error;
+                this.data = User.fromDatabaseFormat(data);
+                return this.data;
+            }
+        } catch (error) {
+            console.error('Error saving user:', error);
+            throw error;
         }
-
-        next();
-    } catch (error) {
-        next(error as Error);
-    }
-});
-
-// Instance method to validate password
-userSchema.methods.isValidPassword = async function (password: string): Promise<boolean> {
-    if (!this.password) return false;
-    return await bcrypt.compare(password, this.password);
-};
-
-// Instance method to validate PINs
-userSchema.methods.isPinValid = async function (pin1: string, pin2: string): Promise<boolean> {
-    if (!this.pin1 || !this.pin2) return false;
-    const isPin1Match = await bcrypt.compare(pin1, this.pin1);
-    const isPin2Match = await bcrypt.compare(pin2, this.pin2);
-    return isPin1Match && isPin2Match;
-};
-
-// Instance method to sync user data from Auth0
-userSchema.methods.syncFromAuth0 = function (auth0User: Auth0UserData): void {
-    this.auth0Data = auth0User;
-    this.email = auth0User.email || this.email;
-
-    // Update name fields if available
-    if (auth0User.given_name && !this.firstName) {
-        this.firstName = auth0User.given_name;
-    }
-    if (auth0User.family_name && !this.lastName) {
-        this.lastName = auth0User.family_name;
-    }
-    if (auth0User.nickname && !this.username) {
-        this.username = auth0User.nickname;
     }
 
-    this.lastLogin = new Date();
-    this.auth0Data.last_login = new Date();
-};
+    /**
+     * Find user by ID
+     */
+    static async findById(id: string): Promise<User | null> {
+        try {
+            const { data, error } = await supabase
+                .from('users')
+                .select('*')
+                .eq('id', id)
+                .single();
 
-// Static method to find or create user from Auth0 data
-userSchema.statics.findOrCreateFromAuth0 = async function (auth0User: Auth0UserData): Promise<IUser> {
-    let user = await this.findOne({ auth0Id: auth0User.sub });
+            if (error) {
+                if (error.code === 'PGRST116') return null; // No rows found
+                throw error;
+            }
 
-    if (!user) {
-        // Create new user
-        user = new this({
-            auth0Id: auth0User.sub,
-            email: auth0User.email,
-            firstName: auth0User.given_name,
-            lastName: auth0User.family_name,
-            username: auth0User.nickname,
-            auth0Data: auth0User,
-            isActive: true,
-            lastLogin: new Date()
-        });
-    } else {
-        // Update existing user with latest Auth0 data
-        user.syncFromAuth0(auth0User);
+            return new User(User.fromDatabaseFormat(data));
+        } catch (error) {
+            console.error('Error finding user by ID:', error);
+            return null;
+        }
     }
 
-    await user.save();
-    return user;
-};
+    /**
+     * Find user by email
+     */
+    static async findOne(query: { email?: string; auth0Id?: string }): Promise<User | null> {
+        try {
+            let queryBuilder = supabase.from('users').select('*');
 
-// Create and export the model
-const User = mongoose.model<IUser>('User', userSchema);
+            if (query.email) {
+                queryBuilder = queryBuilder.eq('email', query.email);
+            }
+            if (query.auth0Id) {
+                queryBuilder = queryBuilder.eq('auth0Id', query.auth0Id);
+            }
+
+            const { data, error } = await queryBuilder.single();
+
+            if (error) {
+                if (error.code === 'PGRST116') return null; // No rows found
+                throw error;
+            }
+
+            return new User(User.fromDatabaseFormat(data));
+        } catch (error) {
+            console.error('Error finding user:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Find or create user from Auth0 data
+     */
+    static async findOrCreateFromAuth0(auth0User: Auth0UserData): Promise<User> {
+        try {
+            let user = await this.findOne({ auth0Id: auth0User.sub });
+
+            if (!user) {
+                // Create new user
+                const newUserData: IUser = {
+                    auth0Id: auth0User.sub,
+                    email: auth0User.email || '',
+                    firstName: auth0User.given_name,
+                    lastName: auth0User.family_name,
+                    auth0Data: auth0User,
+                    isActive: true,
+                    lastLogin: new Date()
+                };
+
+                user = new User(newUserData);
+                await user.save();
+            } else {
+                // Update existing user with latest Auth0 data
+                user.syncFromAuth0(auth0User);
+                await user.save();
+            }
+
+            return user;
+        } catch (error) {
+            console.error('Error finding or creating user from Auth0:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update many users (for cleanup operations)
+     */
+    static async updateMany(
+        filter: { refreshTokenExpiresAt?: { $lte?: Date } },
+        update: { $unset?: { refreshToken?: string; refreshTokenExpiresAt?: string } }
+    ): Promise<void> {
+        try {
+            if (filter.refreshTokenExpiresAt?.$lte && update.$unset) {
+                const { error } = await supabase
+                    .from('users')
+                    .update({
+                        refreshToken: null,
+                        refreshTokenExpiresAt: null
+                    })
+                    .lte('refreshTokenExpiresAt', filter.refreshTokenExpiresAt.$lte.toISOString());
+
+                if (error) throw error;
+            }
+        } catch (error) {
+            console.error('Error updating users:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Convert to JSON (excluding sensitive fields)
+     */
+    toJSON(): any {
+        const { password, refreshToken, ...safeData } = this.data;
+        // Only return fields that are part of the simplified interface
+        return {
+            id: safeData.id,
+            firstName: safeData.firstName,
+            lastName: safeData.lastName,
+            email: safeData.email,
+            auth0Id: safeData.auth0Id,
+            auth0Data: safeData.auth0Data,
+            isActive: safeData.isActive,
+            createdAt: safeData.createdAt,
+            updatedAt: safeData.updatedAt,
+            lastLogin: safeData.lastLogin
+        };
+    }
+}
 
 export default User;
-export { User };

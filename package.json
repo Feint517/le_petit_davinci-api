@@ -9,13 +9,21 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/app.js",
-    "dev": "ts-node app.ts",
+    "dev": "ts-node --require dotenv/config app.ts",
     "dev:watch": "nodemon --exec ts-node app.ts",
     "clean": "rimraf dist",
     "type-check": "tsc --noEmit",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "setup": "node scripts/setup-env.js",
+    "update-env": "node scripts/update-env.js",
+    "test:db": "node tests/test-db-connection.js",
+    "test:server": "node tests/test-server.js",
+    "test:auth": "node tests/test-auth.js",
+    "test:auth-enhanced": "node tests/test-enhanced-auth.js",
+    "test:user": "node tests/create-test-user.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.74.0",
     "axios": "^1.12.2",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.2",
@@ -24,19 +32,22 @@
     "express-jwt": "^8.5.1",
     "express-oauth-server": "^2.0.0",
     "http-errors": "^2.0.0",
+    "joi": "^18.0.1",
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^3.2.0",
     "morgan": "^1.10.0",
+    "node-cron": "^4.2.1",
     "nodemon": "^3.1.10"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/express": "^5.0.3",
     "@types/http-errors": "^2.0.5",
+    "@types/joi": "^17.2.2",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/mongoose": "^5.11.96",
     "@types/morgan": "^1.9.10",
     "@types/node": "^24.1.0",
+    "@types/node-cron": "^3.0.11",
     "rimraf": "^6.0.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3"

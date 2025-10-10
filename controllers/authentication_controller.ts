@@ -5,6 +5,9 @@ import axios from 'axios';
 import { generateRandomPassword, generateRandomPin } from '../utils/helpers';
 import { AuthenticatedRequest, Auth0User, getAuth0UserProfile } from '../middlewares/auth';
 import User, { IUser, Auth0UserData } from '../models/user_model';
+import { storePin, validatePin as validateStoredPin } from '../utils/pinStorage';
+import { CredentialValidationService, PinValidationService, SecurityMonitoringService, AccountRecoveryService } from '../services/authService';
+
 
 // Types
 interface AuthRequest extends Request {
@@ -28,8 +31,7 @@ interface LoginCredentials {
 
 interface PinValidation {
   userId: string;
-  emailPin: string;
-  smsPin: string;
+  pin: string;
 }
 
 interface LocationValidation {
@@ -59,25 +61,38 @@ export const register = async (req: Request<{}, {}, RegisterBody>, res: Response
       return;
     }
 
-    // Hash password
-    const saltRounds = 12;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      res.status(409).json({
+        success: false,
+        message: 'User with this email already exists'
+      });
+      return;
+    }
 
-    // TODO: Save user to database
-    // const newUser = await User.create({
-    //   email,
-    //   password: hashedPassword,
-    //   firstName,
-    //   lastName
-    // });
+    // Create new user
+    const newUserData: IUser = {
+      email,
+      password: password, // Will be hashed by the User model
+      firstName,
+      lastName,
+      auth0Id: `legacy_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, // Generate unique legacy ID
+      isActive: true
+    };
+
+    const newUser = new User(newUserData);
+    await newUser.save();
 
     res.status(201).json({
       success: true,
       message: 'User registered successfully',
       data: {
-        email,
-        firstName,
-        lastName
+        id: newUser._id,
+        email: newUser.email,
+        firstName: newUser.firstName,
+        lastName: newUser.lastName,
+        isActive: newUser.isActive
       }
     });
 
@@ -91,7 +106,7 @@ export const register = async (req: Request<{}, {}, RegisterBody>, res: Response
 };
 
 /**
- * Step 1: Validate email and password credentials
+ * Step 1: Validate email and password credentials (Enhanced)
  */
 export const validateCredentials = async (req: Request<{}, {}, LoginCredentials>, res: Response): Promise<void> => {
   try {
@@ -105,43 +120,40 @@ export const validateCredentials = async (req: Request<{}, {}, LoginCredentials>
       return;
     }
 
-    // TODO: Find user in database
-    // const user = await User.findOne({ email });
-    // if (!user) {
-    //   res.status(401).json({
-    //     success: false,
-    //     message: 'Invalid credentials'
-    //   });
-    //   return;
-    // }
+    // Get client information for security monitoring
+    const ip = req.ip || req.connection.remoteAddress || req.socket.remoteAddress;
+    const userAgent = req.get('User-Agent');
 
-    // TODO: Verify password
-    // const isValidPassword = await bcrypt.compare(password, user.password);
-    // if (!isValidPassword) {
-    //   res.status(401).json({
-    //     success: false,
-    //     message: 'Invalid credentials'
-    //   });
-    //   return;
-    // }
+    // Use enhanced credential validation service
+    const result = await CredentialValidationService.validateCredentials(
+      email, 
+      password, 
+      ip, 
+      userAgent
+    );
 
-    // Generate PINs for next step
-    const emailPin = generateRandomPin();
-    const smsPin = generateRandomPin();
+    if (!result.success) {
+      res.status(401).json({
+        success: false,
+        message: result.message
+      });
+      return;
+    }
 
-    // TODO: Send email and SMS with PINs
-    // await sendEmailPin(email, emailPin);
-    // await sendSMSPin(user.phone, smsPin);
+    // TODO: Send PIN via email/SMS
+    // await sendPin(email, result.pin);
 
-    // TODO: Store PINs temporarily (Redis or database)
-    // await storeTempPins(user.id, { emailPin, smsPin });
+    // For now, return PIN in response (remove in production)
+    console.log(`Generated PIN for user ${result.userId}: ${result.pin}`);
 
     res.status(200).json({
       success: true,
-      message: 'Credentials validated. PINs sent.',
+      message: 'Credentials validated. PIN sent.',
       data: {
-        userId: 'temp-user-id', // Replace with actual user ID
-        step: 'pin-validation'
+        userId: result.userId,
+        step: 'pin-validation',
+        // Remove this in production - only for testing
+        debugPin: result.pin
       }
     });
 
@@ -155,33 +167,43 @@ export const validateCredentials = async (req: Request<{}, {}, LoginCredentials>
 };
 
 /**
- * Step 2: Validate PIN codes
+ * Step 2: Validate PIN codes (Enhanced)
  */
-export const validatePins = async (req: Request<{}, {}, PinValidation>, res: Response): Promise<void> => {
+export const validatePin = async (req: Request<{}, {}, PinValidation>, res: Response): Promise<void> => {
   try {
-    const { userId, emailPin, smsPin } = req.body;
+    const { userId, pin } = req.body;
 
-    if (!userId || !emailPin || !smsPin) {
+    if (!userId || !pin) {
       res.status(400).json({
         success: false,
-        message: 'User ID and both PINs are required'
+        message: 'User ID and PIN are required'
       });
       return;
     }
 
-    // TODO: Validate PINs against stored values
-    // const storedPins = await getTempPins(userId);
-    // if (!storedPins || storedPins.emailPin !== emailPin || storedPins.smsPin !== smsPin) {
-    //   res.status(401).json({
-    //     success: false,
-    //     message: 'Invalid PINs'
-    //   });
-    //   return;
-    // }
+    // Get client information for security monitoring
+    const ip = req.ip || req.connection.remoteAddress || req.socket.remoteAddress;
+    const userAgent = req.get('User-Agent');
+
+    // Use enhanced PIN validation service
+    const result = await PinValidationService.validatePin(
+      userId, 
+      pin, 
+      ip, 
+      userAgent
+    );
+
+    if (!result.success) {
+      res.status(401).json({
+        success: false,
+        message: result.message
+      });
+      return;
+    }
 
     res.status(200).json({
       success: true,
-      message: 'PINs validated successfully.',
+      message: 'PIN validated successfully.',
       data: {
         userId,
         step: 'location-validation'
@@ -212,22 +234,47 @@ export const validateGeoLocation = async (req: Request<{}, {}, LocationValidatio
       return;
     }
 
-    // TODO: Validate location (check if within allowed radius, etc.)
-    // const isValidLocation = await validateUserLocation(userId, latitude, longitude);
-    // if (!isValidLocation) {
-    //   res.status(401).json({
-    //     success: false,
-    //     message: 'Invalid location'
-    //   });
-    //   return;
-    // }
+    // Basic location validation (accept any valid coordinates for now)
+    // In production, you might want to:
+    // - Check if location is within allowed radius of user's registered location
+    // - Validate against known safe locations
+    // - Check for suspicious location changes
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid coordinates provided'
+      });
+      return;
+    }
+
+    // For now, accept any valid coordinates
+    // TODO: Implement proper location validation logic
+    console.log(`Location validation for user ${userId}: lat=${latitude}, lng=${longitude}`);
+
+    // Get user data for token generation
+    const user = await User.findById(userId);
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+      return;
+    }
 
     // Generate tokens
     const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET as string;
     const refreshTokenSecret = process.env.REFRESH_TOKEN_SECRET as string;
 
+    if (!accessTokenSecret || !refreshTokenSecret) {
+      res.status(500).json({
+        success: false,
+        message: 'Server configuration error'
+      });
+      return;
+    }
+
     const accessToken = jwt.sign(
-      { userId, email: 'user@example.com' }, // Replace with actual user data
+      { userId, email: user.email },
       accessTokenSecret,
       { expiresIn: '15m' }
     );
@@ -238,8 +285,14 @@ export const validateGeoLocation = async (req: Request<{}, {}, LocationValidatio
       { expiresIn: '7d' }
     );
 
-    // TODO: Store refresh token in database
-    // await storeRefreshToken(userId, refreshToken);
+    // Store refresh token in database
+    const refreshTokenExpiresAt = new Date();
+    refreshTokenExpiresAt.setDate(refreshTokenExpiresAt.getDate() + 7); // 7 days from now
+
+    user.refreshToken = refreshToken;
+    user.refreshTokenExpiresAt = refreshTokenExpiresAt;
+    user.lastLogin = new Date();
+    await user.save();
 
     res.status(200).json({
       success: true,
@@ -248,8 +301,11 @@ export const validateGeoLocation = async (req: Request<{}, {}, LocationValidatio
         accessToken,
         refreshToken,
         user: {
-          id: userId,
-          email: 'user@example.com' // Replace with actual user data
+          id: user._id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          isActive: user.isActive
         }
       }
     });
@@ -278,8 +334,20 @@ export const logout = async (req: AuthRequest, res: Response): Promise<void> => 
       return;
     }
 
-    // TODO: Remove refresh token from database
-    // await removeRefreshToken(refreshToken);
+    // Remove refresh token from database
+    try {
+      const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET as string) as { userId: string };
+      const user = await User.findById(decoded.userId);
+      
+      if (user && user.refreshToken === refreshToken) {
+        user.refreshToken = undefined;
+        user.refreshTokenExpiresAt = undefined;
+        await user.save();
+      }
+    } catch (error) {
+      // Token might be invalid, but we still want to return success
+      console.log('Invalid refresh token during logout:', error);
+    }
 
     res.status(200).json({
       success: true,
@@ -315,15 +383,24 @@ export const checkRefreshToken = async (req: Request, res: Response): Promise<vo
     try {
       const decoded = jwt.verify(refreshToken, refreshTokenSecret) as { userId: string };
       
-      // TODO: Check if token exists in database
-      // const tokenExists = await checkRefreshTokenInDB(refreshToken);
-      // if (!tokenExists) {
-      //   res.status(401).json({
-      //     success: false,
-      //     message: 'Invalid refresh token'
-      //   });
-      //   return;
-      // }
+      // Check if token exists in database
+      const user = await User.findById(decoded.userId);
+      if (!user || user.refreshToken !== refreshToken) {
+        res.status(401).json({
+          success: false,
+          message: 'Invalid refresh token'
+        });
+        return;
+      }
+
+      // Check if token has expired
+      if (user.refreshTokenExpiresAt && new Date() > user.refreshTokenExpiresAt) {
+        res.status(401).json({
+          success: false,
+          message: 'Refresh token has expired'
+        });
+        return;
+      }
 
       res.status(200).json({
         success: true,
@@ -368,19 +445,28 @@ export const refreshTokensFixed = async (req: Request, res: Response): Promise<v
     try {
       const decoded = jwt.verify(refreshToken, refreshTokenSecret) as { userId: string };
 
-      // TODO: Verify token exists in database and get user info
-      // const user = await getUserByRefreshToken(refreshToken);
-      // if (!user) {
-      //   res.status(401).json({
-      //     success: false,
-      //     message: 'Invalid refresh token'
-      //   });
-      //   return;
-      // }
+      // Verify token exists in database and get user info
+      const user = await User.findById(decoded.userId);
+      if (!user || user.refreshToken !== refreshToken) {
+        res.status(401).json({
+          success: false,
+          message: 'Invalid refresh token'
+        });
+        return;
+      }
+
+      // Check if token has expired
+      if (user.refreshTokenExpiresAt && new Date() > user.refreshTokenExpiresAt) {
+        res.status(401).json({
+          success: false,
+          message: 'Refresh token has expired'
+        });
+        return;
+      }
 
       // Generate new tokens
       const newAccessToken = jwt.sign(
-        { userId: decoded.userId, email: 'user@example.com' }, // Replace with actual user data
+        { userId: decoded.userId, email: user.email },
         accessTokenSecret,
         { expiresIn: '15m' }
       );
@@ -391,8 +477,13 @@ export const refreshTokensFixed = async (req: Request, res: Response): Promise<v
         { expiresIn: '7d' }
       );
 
-      // TODO: Update refresh token in database
-      // await updateRefreshToken(refreshToken, newRefreshToken);
+      // Update refresh token in database
+      const newRefreshTokenExpiresAt = new Date();
+      newRefreshTokenExpiresAt.setDate(newRefreshTokenExpiresAt.getDate() + 7);
+
+      user.refreshToken = newRefreshToken;
+      user.refreshTokenExpiresAt = newRefreshTokenExpiresAt;
+      await user.save();
 
       res.status(200).json({
         success: true,
@@ -559,8 +650,6 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response): Prom
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
-          username: user.username,
-          phoneNumber: user.phoneNumber,
           picture: user.auth0Data?.picture,
           emailVerified: user.auth0Data?.email_verified,
           isActive: user.isActive,
@@ -593,7 +682,7 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
-    const { firstName, lastName, username, phoneNumber } = req.body;
+    const { firstName, lastName } = req.body;
 
     // Find user by Auth0 ID
     const user = await User.findOne({ auth0Id: req.userId });
@@ -608,8 +697,6 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
     // Update allowed fields
     if (firstName !== undefined) user.firstName = firstName;
     if (lastName !== undefined) user.lastName = lastName;
-    if (username !== undefined) user.username = username;
-    if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
 
     await user.save();
 
@@ -623,8 +710,6 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
-          username: user.username,
-          phoneNumber: user.phoneNumber,
           picture: user.auth0Data?.picture,
           emailVerified: user.auth0Data?.email_verified,
           updatedAt: user.updatedAt
@@ -739,6 +824,167 @@ export const deleteAccount = async (req: AuthenticatedRequest, res: Response): P
 
   } catch (error: any) {
     console.error('Delete account error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// ========================
+// SECURITY MONITORING
+// ========================
+
+/**
+ * Get security events for current user (protected route)
+ */
+export const getSecurityEvents = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+      return;
+    }
+
+    const hours = parseInt(req.query.hours as string) || 24;
+    const events = SecurityMonitoringService.getSecurityEvents(req.userId, hours);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        events,
+        period: `${hours} hours`,
+        count: events.length
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Get security events error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+
+/**
+ * Clean up expired security data (admin only - for now, just protected)
+ */
+export const cleanupSecurityData = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+      return;
+    }
+
+    SecurityMonitoringService.cleanup();
+
+    res.status(200).json({
+      success: true,
+      message: 'Security data cleanup completed'
+    });
+
+  } catch (error: any) {
+    console.error('Cleanup security data error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+
+// ========================
+// ACCOUNT RECOVERY
+// ========================
+
+/**
+ * Request account unlock
+ */
+export const requestAccountUnlock = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+      return;
+    }
+
+    // Get client information for security monitoring
+    const ip = req.ip || req.connection.remoteAddress || req.socket.remoteAddress;
+    const userAgent = req.get('User-Agent');
+
+    const result = await AccountRecoveryService.requestAccountUnlock(email, ip, userAgent);
+
+    if (!result.success) {
+      res.status(400).json({
+        success: false,
+        message: result.message
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: result.message,
+      // Remove debugUnlockCode in production
+      ...(result.unlockCode && { debugUnlockCode: result.unlockCode })
+    });
+
+  } catch (error: any) {
+    console.error('Request account unlock error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Unlock account with code
+ */
+export const unlockAccount = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, unlockCode } = req.body;
+
+    if (!email || !unlockCode) {
+      res.status(400).json({
+        success: false,
+        message: 'Email and unlock code are required'
+      });
+      return;
+    }
+
+    // Get client information for security monitoring
+    const ip = req.ip || req.connection.remoteAddress || req.socket.remoteAddress;
+    const userAgent = req.get('User-Agent');
+
+    const result = await AccountRecoveryService.unlockAccount(email, unlockCode, ip, userAgent);
+
+    if (!result.success) {
+      res.status(400).json({
+        success: false,
+        message: result.message
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: result.message
+    });
+
+  } catch (error: any) {
+    console.error('Unlock account error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'

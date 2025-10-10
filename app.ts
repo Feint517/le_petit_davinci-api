@@ -8,14 +8,13 @@ import apiRoutes from './routes/api_routes';
 // import projectRoutes from './routes/projects_routes';
 import { verifyAccessToken, verifyAuth0Token } from './middlewares/auth';
 // import { cleanupExpiredTokens } from './cron/cleanupTokens';
-import initMongoDB from './utils/init_mongodb';
 // import './cron/changeSecrets';
 
 //* Load environment variables
 config();
 
-//* Initialize MongoDB connection
-initMongoDB();
+//* Initialize Supabase connection
+import './utils/init_supabase';
 
 //* Initialize Express app
 const app: Application = express();
@@ -92,7 +91,7 @@ app.use((err: CustomError, req: Request, res: Response, next: NextFunction): voi
 });
 
 //* Server configuration
-const PORT: number = parseInt(process.env.PORT as string) || 5000;
+const PORT: number = parseInt(process.env.PORT as string) || 3000;
 
 const server = app.listen(PORT, (): void => {
     console.log(`🚀 Server running on port ${PORT}`);
