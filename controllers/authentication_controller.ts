@@ -2,9 +2,13 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import axios from 'axios';
+import supabase from '../utils/init_supabase';
 import { generateRandomPassword, generateRandomPin } from '../utils/helpers';
-import { AuthenticatedRequest, Auth0User, getAuth0UserProfile } from '../middlewares/auth';
-import User, { IUser, Auth0UserData } from '../models/user_model';
+import { AuthenticatedRequest, SupabaseUser } from '../middlewares/auth';
+// import { AuthenticatedRequest, Auth0User, getAuth0UserProfile } from '../middlewares/auth'; // DEPRECATED
+import User, { IUser, Auth0UserData } from '../models/user_model'; // DEPRECATED - kept for backward compatibility
+import Profile from '../models/profile_model';
+import ProfileService from '../services/profileService';
 import { storePin, validatePin as validateStoredPin } from '../utils/pinStorage';
 import { CredentialValidationService, PinValidationService, SecurityMonitoringService, AccountRecoveryService } from '../services/authService';
 
@@ -45,10 +49,587 @@ interface ChangePasswordBody {
   newPassword: string;
 }
 
+// ========================
+// SUPABASE AUTHENTICATION (PRIMARY)
+// ========================
+
 /**
- * User registration
+ * User registration with Supabase Auth
+ * Creates a new user account and automatically creates a default profile
  */
 export const register = async (req: Request<{}, {}, RegisterBody>, res: Response): Promise<void> => {
+  try {
+    const { email, password, firstName, lastName } = req.body;
+
+    // Basic validation
+    if (!email || !password || !firstName || !lastName) {
+      res.status(400).json({ 
+        success: false, 
+        message: 'All fields are required' 
+      });
+      return;
+    }
+
+    // Register user with Supabase Auth
+    const { data: authData, error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          first_name: firstName,
+          last_name: lastName
+        }
+      }
+    });
+
+    if (signUpError) {
+      console.error('Supabase signup error:', signUpError);
+      res.status(400).json({
+        success: false,
+        message: signUpError.message || 'Registration failed'
+      });
+      return;
+    }
+
+    if (!authData.user) {
+      res.status(400).json({
+        success: false,
+        message: 'Registration failed - no user created'
+      });
+      return;
+    }
+
+    // Create default profile with a PIN (user will be prompted to set this)
+    const defaultPin = '0000'; // Temporary PIN - user should change this immediately
+    try {
+      await Profile.create(
+        authData.user.id,
+        `${firstName}'s Profile`,
+        defaultPin
+      );
+    } catch (profileError) {
+      console.error('Error creating default profile:', profileError);
+      // Continue even if profile creation fails - user can create profiles later
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully. Please check your email for verification.',
+      data: {
+        user: {
+          id: authData.user.id,
+          email: authData.user.email,
+          firstName,
+          lastName
+        },
+        session: authData.session
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Registration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * User login with Supabase Auth
+ * Returns session and list of available profiles
+ */
+export const login = async (req: Request<{}, {}, LoginCredentials>, res: Response): Promise<void> => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
+      });
+      return;
+    }
+
+    // Sign in with Supabase
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error || !data.user) {
+      console.error('Login error:', error);
+      res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+      return;
+    }
+
+    // Get user's profiles
+    const profilesResult = await ProfileService.getUserProfiles(data.user.id);
+
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      data: {
+        session: data.session,
+        user: {
+          id: data.user.id,
+          email: data.user.email,
+          user_metadata: data.user.user_metadata
+        },
+        profiles: profilesResult.profiles,
+        profileCount: profilesResult.count
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Logout user from Supabase
+ */
+export const logout = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    // Get token from header
+    const authHeader = req.headers['authorization'];
+    const token = authHeader?.split(' ')[1];
+
+    if (token) {
+      // Sign out from Supabase
+      await supabase.auth.signOut();
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Logged out successfully'
+    });
+
+  } catch (error: any) {
+    console.error('Logout error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Refresh Supabase session
+ */
+export const refreshTokens = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      res.status(400).json({
+        success: false,
+        message: 'Refresh token is required'
+      });
+      return;
+    }
+
+    // Refresh session with Supabase
+    const { data, error } = await supabase.auth.refreshSession({
+      refresh_token: refreshToken
+    });
+
+    if (error || !data.session) {
+      res.status(401).json({
+        success: false,
+        message: 'Invalid or expired refresh token'
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Session refreshed successfully',
+      data: {
+        session: data.session
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Refresh token error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// ========================
+// GOOGLE OAUTH AUTHENTICATION
+// ========================
+
+/**
+ * Initiate Google OAuth login
+ * Returns the Google OAuth URL for the client to redirect to
+ */
+export const googleLogin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/callback`,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        }
+      }
+    });
+
+    if (error) {
+      console.error('Google OAuth error:', error);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to initiate Google login'
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        url: data.url,
+        provider: 'google'
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Google login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Handle OAuth callback after Google authentication
+ * Exchange code for session and create/update user
+ */
+export const handleOAuthCallback = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { code } = req.query;
+
+    if (!code || typeof code !== 'string') {
+      res.status(400).json({
+        success: false,
+        message: 'Authorization code is required'
+      });
+      return;
+    }
+
+    // Exchange code for session
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+
+    if (error || !data.session) {
+      console.error('OAuth callback error:', error);
+      res.status(400).json({
+        success: false,
+        message: error?.message || 'Failed to authenticate with Google'
+      });
+      return;
+    }
+
+    // Check if user has profiles
+    const profilesResult = await ProfileService.getUserProfiles(data.user.id);
+
+    // If no profiles exist, create a default one
+    if (profilesResult.count === 0) {
+      const userName = data.user.user_metadata?.full_name || 
+                      data.user.user_metadata?.name || 
+                      'My Profile';
+      const defaultPin = '0000'; // User should change this
+
+      await Profile.create(
+        data.user.id,
+        userName,
+        defaultPin
+      );
+
+      // Fetch updated profiles
+      const updatedProfiles = await ProfileService.getUserProfiles(data.user.id);
+      profilesResult.profiles = updatedProfiles.profiles;
+      profilesResult.count = updatedProfiles.count;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Google authentication successful',
+      data: {
+        session: data.session,
+        user: {
+          id: data.user.id,
+          email: data.user.email,
+          name: data.user.user_metadata?.full_name || data.user.user_metadata?.name,
+          picture: data.user.user_metadata?.avatar_url || data.user.user_metadata?.picture,
+          email_verified: data.user.email_confirmed_at !== null
+        },
+        profiles: profilesResult.profiles,
+        profileCount: profilesResult.count
+      }
+    });
+
+  } catch (error: any) {
+    console.error('OAuth callback error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// ========================
+// PROFILE MANAGEMENT
+// ========================
+
+/**
+ * Get all profiles for authenticated user
+ */
+export const getProfiles = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+      return;
+    }
+
+    const result = await ProfileService.getUserProfiles(req.userId);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        profiles: result.profiles,
+        count: result.count
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Get profiles error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Create a new profile
+ */
+export const createProfile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+      return;
+    }
+
+    const { profile_name, pin, avatar } = req.body;
+
+    const result = await ProfileService.createProfile(
+      req.userId,
+      profile_name,
+      pin,
+      avatar
+    );
+
+    if (!result.success) {
+      res.status(400).json({
+        success: false,
+        message: result.message
+      });
+      return;
+    }
+
+    res.status(201).json({
+      success: true,
+      message: result.message,
+      data: {
+        profile: result.profile
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Create profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Validate profile PIN and get profile token
+ */
+export const validateProfilePin = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+      return;
+    }
+
+    const { profile_id, pin } = req.body;
+
+    const result = await ProfileService.validateProfilePin(
+      req.userId,
+      profile_id,
+      pin
+    );
+
+    if (!result.success) {
+      res.status(401).json({
+        success: false,
+        message: result.message
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: result.message,
+      data: {
+        profileToken: result.profileToken,
+        profile: result.profile
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Validate profile PIN error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Update profile
+ */
+export const updateProfile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+      return;
+    }
+
+    const { profileId } = req.params;
+    
+    if (!profileId) {
+      res.status(400).json({
+        success: false,
+        message: 'Profile ID is required'
+      });
+      return;
+    }
+
+    const updates = req.body;
+
+    const result = await ProfileService.updateProfile(
+      req.userId,
+      profileId,
+      updates
+    );
+
+    if (!result.success) {
+      res.status(400).json({
+        success: false,
+        message: result.message
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: result.message,
+      data: {
+        profile: result.profile
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Update profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Delete profile
+ */
+export const deleteProfile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+      return;
+    }
+
+    const { profileId } = req.params;
+    
+    if (!profileId) {
+      res.status(400).json({
+        success: false,
+        message: 'Profile ID is required'
+      });
+      return;
+    }
+
+    const result = await ProfileService.deleteProfile(req.userId, profileId);
+
+    if (!result.success) {
+      res.status(400).json({
+        success: false,
+        message: result.message
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: result.message
+    });
+
+  } catch (error: any) {
+    console.error('Delete profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// ========================
+// LEGACY AUTH (DEPRECATED - COMMENTED OUT)
+// ========================
+
+/**
+ * DEPRECATED: User registration (legacy)
+ */
+/* export const registerLegacy = async (req: Request<{}, {}, RegisterBody>, res: Response): Promise<void> => {
   try {
     const { email, password, firstName, lastName } = req.body;
 
@@ -106,9 +687,9 @@ export const register = async (req: Request<{}, {}, RegisterBody>, res: Response
 };
 
 /**
- * Step 1: Validate email and password credentials (Enhanced)
+ * DEPRECATED: Step 1: Validate email and password credentials (Enhanced)
  */
-export const validateCredentials = async (req: Request<{}, {}, LoginCredentials>, res: Response): Promise<void> => {
+/* export const validateCredentials = async (req: Request<{}, {}, LoginCredentials>, res: Response): Promise<void> => {
   try {
     const { email, password } = req.body;
 
@@ -166,10 +747,12 @@ export const validateCredentials = async (req: Request<{}, {}, LoginCredentials>
   }
 };
 
+}; */
+
 /**
- * Step 2: Validate PIN codes (Enhanced)
+ * DEPRECATED: Step 2: Validate PIN codes (Enhanced)
  */
-export const validatePin = async (req: Request<{}, {}, PinValidation>, res: Response): Promise<void> => {
+/* export const validatePin = async (req: Request<{}, {}, PinValidation>, res: Response): Promise<void> => {
   try {
     const { userId, pin } = req.body;
 
@@ -219,10 +802,12 @@ export const validatePin = async (req: Request<{}, {}, PinValidation>, res: Resp
   }
 };
 
+}; */
+
 /**
- * Step 3: Validate geolocation and complete login
+ * DEPRECATED: Step 3: Validate geolocation and complete login
  */
-export const validateGeoLocation = async (req: Request<{}, {}, LocationValidation>, res: Response): Promise<void> => {
+/* export const validateGeoLocation = async (req: Request<{}, {}, LocationValidation>, res: Response): Promise<void> => {
   try {
     const { userId, latitude, longitude } = req.body;
 
@@ -319,10 +904,12 @@ export const validateGeoLocation = async (req: Request<{}, {}, LocationValidatio
   }
 };
 
+}; */
+
 /**
- * Logout user
+ * DEPRECATED: Logout user (legacy)
  */
-export const logout = async (req: AuthRequest, res: Response): Promise<void> => {
+/* export const logoutLegacy = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { refreshToken } = req.body;
 
@@ -363,10 +950,12 @@ export const logout = async (req: AuthRequest, res: Response): Promise<void> => 
   }
 };
 
+}; */
+
 /**
- * Check if refresh token is valid
+ * DEPRECATED: Check if refresh token is valid (legacy)
  */
-export const checkRefreshToken = async (req: Request, res: Response): Promise<void> => {
+/* export const checkRefreshToken = async (req: Request, res: Response): Promise<void> => {
   try {
     const { refreshToken } = req.body;
 
@@ -424,10 +1013,12 @@ export const checkRefreshToken = async (req: Request, res: Response): Promise<vo
   }
 };
 
+}; */
+
 /**
- * Refresh access and refresh tokens
+ * DEPRECATED: Refresh access and refresh tokens (legacy)
  */
-export const refreshTokensFixed = async (req: Request, res: Response): Promise<void> => {
+/* export const refreshTokensFixed = async (req: Request, res: Response): Promise<void> => {
   try {
     const { refreshToken } = req.body;
 
@@ -510,10 +1101,12 @@ export const refreshTokensFixed = async (req: Request, res: Response): Promise<v
   }
 };
 
+}; */
+
 /**
- * Change user password (protected route)
+ * DEPRECATED: Change user password (protected route) - Use Supabase password reset instead
  */
-export const changePassword = async (req: AuthRequest, res: Response): Promise<void> => {
+/* export const changePassword = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { currentPassword, newPassword } = req.body;
     const userId = req.user?.id;
@@ -572,14 +1165,16 @@ export const changePassword = async (req: AuthRequest, res: Response): Promise<v
   }
 };
 
+}; */
+
 // ========================
-// AUTH0 CONTROLLERS
+// AUTH0 CONTROLLERS (DEPRECATED - COMMENTED OUT)
 // ========================
 
 /**
- * Auth0 callback handler - processes Auth0 user after successful authentication
+ * DEPRECATED: Auth0 callback handler - processes Auth0 user after successful authentication
  */
-export const auth0Callback = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+/* export const auth0Callback = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     if (!req.userId || !req.user) {
       res.status(401).json({
@@ -618,10 +1213,12 @@ export const auth0Callback = async (req: AuthenticatedRequest, res: Response): P
   }
 };
 
+}; */
+
 /**
- * Get current user profile (protected route)
+ * DEPRECATED: Get current user profile (protected route) - Auth0 version
  */
-export const getProfile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+/* export const getProfileAuth0 = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     if (!req.userId) {
       res.status(401).json({
@@ -669,10 +1266,12 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response): Prom
   }
 };
 
+}; */
+
 /**
- * Update user profile (protected route)
+ * DEPRECATED: Update user profile (protected route) - Auth0 version  
  */
-export const updateProfile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+/* export const updateProfileAuth0 = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     if (!req.userId) {
       res.status(401).json({
@@ -726,10 +1325,12 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
   }
 };
 
+}; */
+
 /**
- * Sync user data from Auth0 Management API (protected route)
+ * DEPRECATED: Sync user data from Auth0 Management API (protected route)
  */
-export const syncAuth0Profile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+/* export const syncAuth0Profile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     if (!req.userId) {
       res.status(401).json({
@@ -790,10 +1391,12 @@ export const syncAuth0Profile = async (req: AuthenticatedRequest, res: Response)
   }
 };
 
+}; */
+
 /**
- * Delete user account (protected route)
+ * DEPRECATED: Delete user account (protected route) - Auth0 version
  */
-export const deleteAccount = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+/* export const deleteAccountAuth0 = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     if (!req.userId) {
       res.status(401).json({
@@ -831,8 +1434,10 @@ export const deleteAccount = async (req: AuthenticatedRequest, res: Response): P
   }
 };
 
+}; */
+
 // ========================
-// SECURITY MONITORING
+// SECURITY MONITORING (KEPT - WORKS WITH SUPABASE)
 // ========================
 
 /**
@@ -901,7 +1506,7 @@ export const cleanupSecurityData = async (req: AuthenticatedRequest, res: Respon
 
 
 // ========================
-// ACCOUNT RECOVERY
+// ACCOUNT RECOVERY (KEPT - WORKS WITH SUPABASE)
 // ========================
 
 /**

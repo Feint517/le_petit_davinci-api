@@ -37,7 +37,8 @@
     "jwks-rsa": "^3.2.0",
     "morgan": "^1.10.0",
     "node-cron": "^4.2.1",
-    "nodemon": "^3.1.10"
+    "nodemon": "^3.1.10",
+    "stripe": "^19.1.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -48,6 +49,7 @@
     "@types/morgan": "^1.9.10",
     "@types/node": "^24.1.0",
     "@types/node-cron": "^3.0.11",
+    "@types/stripe": "^8.0.416",
     "rimraf": "^6.0.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3"

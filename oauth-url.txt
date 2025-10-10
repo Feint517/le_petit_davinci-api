@@ -1,0 +1,1 @@
+﻿https://vncsfhiujnoymnzsjqvo.supabase.co/auth/v1/authorize?provider=google&redirect_to=http%3A%2F%2Flocalhost%3A3000%2Fauth%2Fcallback&access_type=offline&prompt=consent

@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Google OAuth - Le Petit Davinci</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4285f4;
+            padding-bottom: 10px;
+        }
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            margin: 10px 5px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn-google {
+            background: #4285f4;
+            color: white;
+        }
+        .btn-google:hover {
+            background: #357ae8;
+        }
+        .btn-test {
+            background: #34a853;
+            color: white;
+        }
+        .btn-test:hover {
+            background: #2d8e47;
+        }
+        .status {
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+            font-weight: 500;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .code-block {
+            background: #f4f4f4;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        .section {
+            margin: 30px 0;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 5px;
+        }
+        .step {
+            margin: 15px 0;
+            padding-left: 30px;
+            position: relative;
+        }
+        .step::before {
+            content: "→";
+            position: absolute;
+            left: 5px;
+            color: #4285f4;
+            font-weight: bold;
+        }
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #4285f4;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Test Google OAuth Authentication</h1>
+        
+        <div id="status" class="status info">
+            Ready to test Google OAuth. Click "Sign in with Google" below.
+        </div>
+
+        <div class="section">
+            <h2>Test Google OAuth Flow</h2>
+            <button class="btn btn-google" onclick="testGoogleOAuth()">
+                Sign in with Google
+            </button>
+            <button class="btn btn-test" onclick="testBackendConnection()">
+                Test Backend Connection
+            </button>
+        </div>
+
+        <div class="section">
+            <h3>📊 Test Results</h3>
+            <div id="results"></div>
+        </div>
+
+        <div class="section">
+            <h3>📝 Manual Testing Instructions</h3>
+            <div class="step">
+                <strong>Step 1:</strong> Click "Sign in with Google" button above
+            </div>
+            <div class="step">
+                <strong>Step 2:</strong> You'll be redirected to Google's login page
+            </div>
+            <div class="step">
+                <strong>Step 3:</strong> Sign in with your Google account
+            </div>
+            <div class="step">
+                <strong>Step 4:</strong> After authorization, you'll be redirected back
+            </div>
+            <div class="step">
+                <strong>Step 5:</strong> Check the results section for session data
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>🔧 PowerShell Test Commands</h3>
+            <div class="code-block">
+# Test 1: Get OAuth URL
+$response = Invoke-RestMethod -Uri "http://localhost:3000/auth/google" -Method POST -ContentType "application/json"
+Write-Host $response.data.url
+
+# Test 2: Open the URL in browser
+Start-Process $response.data.url
+
+# Test 3: After Google redirect, check the callback
+# The URL will look like: http://localhost:3000/auth/callback?code=...
+# Extract the code and test:
+$code = "PASTE_CODE_HERE"
+Invoke-RestMethod -Uri "http://localhost:3000/auth/callback?code=$code" -Method GET
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:3000';
+        
+        function showStatus(message, type = 'info') {
+            const status = document.getElementById('status');
+            status.className = `status ${type}`;
+            status.innerHTML = message;
+        }
+
+        function addResult(title, data, type = 'info') {
+            const results = document.getElementById('results');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `status ${type}`;
+            resultDiv.innerHTML = `
+                <strong>${title}</strong><br>
+                <pre>${JSON.stringify(data, null, 2)}</pre>
+            `;
+            results.appendChild(resultDiv);
+        }
+
+        async function testBackendConnection() {
+            showStatus('Testing backend connection... <span class="loading"></span>', 'info');
+            
+            try {
+                const response = await fetch(`${API_URL}/api/health`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showStatus('✅ Backend is running!', 'success');
+                    addResult('Health Check', data, 'success');
+                } else {
+                    showStatus('❌ Backend responded with error', 'error');
+                    addResult('Health Check Error', data, 'error');
+                }
+            } catch (error) {
+                showStatus('❌ Cannot connect to backend. Make sure server is running on port 3000.', 'error');
+                addResult('Connection Error', { error: error.message }, 'error');
+            }
+        }
+
+        async function testGoogleOAuth() {
+            showStatus('Initiating Google OAuth... <span class="loading"></span>', 'info');
+            
+            try {
+                // Step 1: Get OAuth URL from backend
+                const response = await fetch(`${API_URL}/auth/google`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showStatus('✅ OAuth URL received! Redirecting to Google...', 'success');
+                    addResult('OAuth URL Generated', {
+                        provider: data.data.provider,
+                        url: data.data.url.substring(0, 100) + '...'
+                    }, 'success');
+
+                    // Wait 2 seconds so user can see the success message
+                    setTimeout(() => {
+                        // Redirect to Google OAuth
+                        window.location.href = data.data.url;
+                    }, 2000);
+                } else {
+                    showStatus('❌ Failed to get OAuth URL', 'error');
+                    addResult('OAuth Error', data, 'error');
+                }
+            } catch (error) {
+                showStatus('❌ Error connecting to backend', 'error');
+                addResult('Connection Error', { 
+                    error: error.message,
+                    hint: 'Make sure the server is running: npm run dev'
+                }, 'error');
+            }
+        }
+
+        // Check if we're on the callback URL
+        async function handleCallback() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+            const error = urlParams.get('error');
+
+            if (error) {
+                showStatus(`❌ OAuth Error: ${error}`, 'error');
+                addResult('OAuth Error', { error, description: urlParams.get('error_description') }, 'error');
+                return;
+            }
+
+            if (code) {
+                showStatus('Processing Google authorization... <span class="loading"></span>', 'info');
+                
+                try {
+                    const response = await fetch(`${API_URL}/auth/callback?code=${code}`);
+                    const data = await response.json();
+
+                    if (response.ok && data.success) {
+                        showStatus('🎉 Google authentication successful!', 'success');
+                        
+                        addResult('User Information', {
+                            id: data.data.user.id,
+                            email: data.data.user.email,
+                            name: data.data.user.name,
+                            email_verified: data.data.user.email_verified
+                        }, 'success');
+
+                        addResult('Session Tokens', {
+                            access_token: data.data.session.access_token.substring(0, 30) + '...',
+                            refresh_token: data.data.session.refresh_token ? 'Present' : 'Not provided',
+                            expires_in: data.data.session.expires_in + ' seconds'
+                        }, 'success');
+
+                        addResult('Profiles', {
+                            count: data.data.profileCount,
+                            profiles: data.data.profiles
+                        }, 'success');
+
+                        // Store tokens in localStorage for testing
+                        localStorage.setItem('supabase_token', data.data.session.access_token);
+                        localStorage.setItem('user', JSON.stringify(data.data.user));
+                        
+                        addResult('Next Steps', {
+                            message: 'Tokens stored in localStorage',
+                            instructions: 'You can now test profile PIN validation'
+                        }, 'info');
+
+                    } else {
+                        showStatus('❌ Authentication failed', 'error');
+                        addResult('Callback Error', data, 'error');
+                    }
+                } catch (error) {
+                    showStatus('❌ Error processing callback', 'error');
+                    addResult('Processing Error', { error: error.message }, 'error');
+                }
+            }
+        }
+
+        // Run callback handler on page load
+        window.addEventListener('DOMContentLoaded', handleCallback);
+
+        // Test backend connection on load
+        window.addEventListener('DOMContentLoaded', async () => {
+            if (!window.location.search.includes('code')) {
+                await testBackendConnection();
+            }
+        });
+    </script>
+</body>
+</html>
+

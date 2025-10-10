@@ -257,3 +257,135 @@ export const authSchemas = {
             })
     })
 };
+
+// Profile validation schemas for multi-profile system
+export const profileSchemas = {
+    create: Joi.object({
+        profile_name: Joi.string()
+            .min(1)
+            .max(50)
+            .pattern(/^[a-zA-Z0-9\s\-_]+$/) // Allow letters, numbers, spaces, hyphens, and underscores
+            .required()
+            .messages({
+                'string.min': 'Profile name is required',
+                'string.max': 'Profile name must not exceed 50 characters',
+                'string.pattern.base': 'Profile name can only contain letters, numbers, spaces, hyphens, and underscores',
+                'any.required': 'Profile name is required'
+            }),
+        pin: Joi.string()
+            .length(4)
+            .pattern(/^\d{4}$/) // Exactly 4 digits
+            .required()
+            .messages({
+                'string.length': 'PIN must be exactly 4 digits',
+                'string.pattern.base': 'PIN must contain only numbers',
+                'any.required': 'PIN is required'
+            }),
+        avatar: Joi.string()
+            .uri()
+            .max(500)
+            .optional()
+            .messages({
+                'string.uri': 'Avatar must be a valid URL',
+                'string.max': 'Avatar URL is too long'
+            })
+    }),
+
+    validatePin: Joi.object({
+        profile_id: Joi.string()
+            .pattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i) // UUID pattern
+            .required()
+            .messages({
+                'string.pattern.base': 'Invalid profile ID format',
+                'any.required': 'Profile ID is required'
+            }),
+        pin: Joi.string()
+            .length(4)
+            .pattern(/^\d{4}$/) // Exactly 4 digits
+            .required()
+            .messages({
+                'string.length': 'PIN must be exactly 4 digits',
+                'string.pattern.base': 'PIN must contain only numbers',
+                'any.required': 'PIN is required'
+            })
+    }),
+
+    update: Joi.object({
+        profile_name: Joi.string()
+            .min(1)
+            .max(50)
+            .pattern(/^[a-zA-Z0-9\s\-_]+$/) // Allow letters, numbers, spaces, hyphens, and underscores
+            .optional()
+            .messages({
+                'string.min': 'Profile name cannot be empty',
+                'string.max': 'Profile name must not exceed 50 characters',
+                'string.pattern.base': 'Profile name can only contain letters, numbers, spaces, hyphens, and underscores'
+            }),
+        avatar: Joi.string()
+            .uri()
+            .max(500)
+            .optional()
+            .messages({
+                'string.uri': 'Avatar must be a valid URL',
+                'string.max': 'Avatar URL is too long'
+            }),
+        pin: Joi.string()
+            .length(4)
+            .pattern(/^\d{4}$/) // Exactly 4 digits
+            .optional()
+            .messages({
+                'string.length': 'PIN must be exactly 4 digits',
+                'string.pattern.base': 'PIN must contain only numbers'
+            })
+    }).min(1) // At least one field must be present
+    .messages({
+        'object.min': 'At least one field must be provided for update'
+    })
+};
+
+/**
+ * ================================
+ * SUBSCRIPTION VALIDATION SCHEMAS
+ * ================================
+ */
+
+export const subscriptionSchemas = {
+    createCheckout: Joi.object({
+        priceId: Joi.string()
+            .required()
+            .messages({
+                'any.required': 'Price ID is required',
+                'string.empty': 'Price ID cannot be empty'
+            }),
+        successUrl: Joi.string()
+            .uri()
+            .optional()
+            .messages({
+                'string.uri': 'Success URL must be a valid URL'
+            }),
+        cancelUrl: Joi.string()
+            .uri()
+            .optional()
+            .messages({
+                'string.uri': 'Cancel URL must be a valid URL'
+            })
+    }),
+
+    createPortal: Joi.object({
+        returnUrl: Joi.string()
+            .uri()
+            .optional()
+            .messages({
+                'string.uri': 'Return URL must be a valid URL'
+            })
+    }),
+
+    cancelSubscription: Joi.object({
+        reason: Joi.string()
+            .max(500)
+            .optional()
+            .messages({
+                'string.max': 'Reason must not exceed 500 characters'
+            })
+    })
+};

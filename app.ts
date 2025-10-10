@@ -4,9 +4,12 @@ import createError from 'http-errors';
 import authRoutes from './routes/auth_routes';
 import userRoutes from './routes/user_routes';
 import apiRoutes from './routes/api_routes';
+import subscriptionRoutes from './routes/subscription_routes';
+import webhookRoutes from './routes/webhook_routes';
 // import teamRoutes from './routes/teams_routes';
 // import projectRoutes from './routes/projects_routes';
-import { verifyAccessToken, verifyAuth0Token } from './middlewares/auth';
+import { verifySupabaseToken } from './middlewares/auth';
+// import { verifyAccessToken, verifyAuth0Token } from './middlewares/auth'; // DEPRECATED
 // import { cleanupExpiredTokens } from './cron/cleanupTokens';
 // import './cron/changeSecrets';
 
@@ -16,10 +19,18 @@ config();
 //* Initialize Supabase connection
 import './utils/init_supabase';
 
+//* Validate Stripe configuration
+import { validateStripeConfig } from './utils/stripe';
+validateStripeConfig();
+
 //* Initialize Express app
 const app: Application = express();
 
-//* Middleware
+//* IMPORTANT: Register webhook routes BEFORE body parser
+//* Webhooks need raw body for signature verification
+app.use('/api/webhooks', webhookRoutes);
+
+//* Middleware - Body parser for JSON
 app.use(express.json());
 
 // Simple test route FIRST
@@ -35,6 +46,8 @@ console.log('Registering Auth routes...');
 app.use('/auth', authRoutes);
 console.log('Registering User routes...');
 app.use('/user', userRoutes);
+console.log('Registering Subscription routes...');
+app.use('/api/subscriptions', subscriptionRoutes);
 
 // Test route directly on app
 app.get('/test', (req: Request, res: Response): void => {
@@ -42,8 +55,22 @@ app.get('/test', (req: Request, res: Response): void => {
     res.json({ message: 'Test route working!' });
 });
 
-// Protected root route with Auth0
-app.get('/', verifyAuth0Token, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+// Protected root route with Supabase
+app.get('/', verifySupabaseToken, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const authReq = req as any;
+    res.json({
+        success: true,
+        message: 'Hello from Le Petit Davinci API with Supabase',
+        user: {
+            id: authReq.userId,
+            email: authReq.user?.email
+        },
+        timestamp: new Date().toISOString()
+    });
+});
+
+// DEPRECATED: Auth0 protected route (kept for reference)
+/* app.get('/auth0', verifyAuth0Token, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const authReq = req as any;
     res.json({
         success: true,
@@ -55,16 +82,16 @@ app.get('/', verifyAuth0Token, async (req: Request, res: Response, next: NextFun
         },
         timestamp: new Date().toISOString()
     });
-});
+}); */
 
-// Legacy protected route (for backward compatibility)
-app.get('/legacy', verifyAccessToken, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+// DEPRECATED: Legacy protected route (for backward compatibility)
+/* app.get('/legacy', verifyAccessToken, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     res.json({
         success: true,
         message: 'Hello from Le Petit Davinci API (Legacy)',
         user: (req as any).userId
     });
-});
+}); */
 
 //* 404 handler - route not found
 app.use(async (req: Request, res: Response, next: NextFunction): Promise<void> => {
