@@ -11,6 +11,8 @@ import Profile from '../models/profile_model';
 import ProfileService from '../services/profileService';
 import { storePin, validatePin as validateStoredPin } from '../utils/pinStorage';
 import { CredentialValidationService, PinValidationService, SecurityMonitoringService, AccountRecoveryService } from '../services/authService';
+import emailService from '../services/emailService';
+import verificationService from '../services/verificationService';
 
 
 // Types
@@ -55,7 +57,7 @@ interface ChangePasswordBody {
 
 /**
  * User registration with Supabase Auth
- * Creates a new user account and automatically creates a default profile
+ * Creates a new user account and sends verification email
  */
 export const register = async (req: Request<{}, {}, RegisterBody>, res: Response): Promise<void> => {
   try {
@@ -70,7 +72,7 @@ export const register = async (req: Request<{}, {}, RegisterBody>, res: Response
       return;
     }
 
-    // Register user with Supabase Auth
+    // Register user with Supabase Auth (using custom email verification)
     const { data: authData, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
@@ -79,6 +81,7 @@ export const register = async (req: Request<{}, {}, RegisterBody>, res: Response
           first_name: firstName,
           last_name: lastName
         }
+        // Note: We handle email verification manually via our verification service
       }
     });
 
@@ -99,30 +102,28 @@ export const register = async (req: Request<{}, {}, RegisterBody>, res: Response
       return;
     }
 
-    // Create default profile with a PIN (user will be prompted to set this)
-    const defaultPin = '0000'; // Temporary PIN - user should change this immediately
+    // Generate and store verification code
+    const verificationCode = verificationService.storeCode(
+      email,
+      authData.user.id,
+      firstName
+    );
+
+    // Send verification email
     try {
-      await Profile.create(
-        authData.user.id,
-        `${firstName}'s Profile`,
-        defaultPin
-      );
-    } catch (profileError) {
-      console.error('Error creating default profile:', profileError);
-      // Continue even if profile creation fails - user can create profiles later
+      await emailService.sendVerificationEmail(email, firstName, verificationCode);
+      console.log(`✅ Verification email sent to ${email}`);
+    } catch (emailError) {
+      console.error('Failed to send verification email:', emailError);
+      // Continue anyway - user can request resend
     }
 
     res.status(201).json({
       success: true,
-      message: 'User registered successfully. Please check your email for verification.',
+      message: 'Compte créé! Vérifiez votre email pour activer votre compte.',
       data: {
-        user: {
-          id: authData.user.id,
-          email: authData.user.email,
-          firstName,
-          lastName
-        },
-        session: authData.session
+        email: authData.user.email,
+        requiresVerification: true
       }
     });
 
@@ -259,6 +260,162 @@ export const refreshTokens = async (req: Request, res: Response): Promise<void> 
 
   } catch (error: any) {
     console.error('Refresh token error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// ========================
+// EMAIL VERIFICATION
+// ========================
+
+/**
+ * Verify email with code
+ */
+export const verifyEmail = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      res.status(400).json({
+        success: false,
+        message: 'Email and code are required'
+      });
+      return;
+    }
+
+    // Verify the code
+    const result = verificationService.verifyCode(email, code);
+
+    if (!result.success) {
+      res.status(400).json({
+        success: false,
+        message: result.message
+      });
+      return;
+    }
+
+    // Update email_confirmed_at in the database using our custom function
+    const { error: confirmError } = await supabase.rpc('confirm_user_email', { 
+      user_id: result.userId 
+    });
+
+    if (confirmError) {
+      console.error('Error confirming email:', confirmError);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to confirm email. Please try again.'
+      });
+      return;
+    }
+
+    console.log(`✅ Email confirmed for user ${result.userId}`);
+
+    // User has been verified! Now log them in with their password
+    const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
+      email,
+      password: req.body.password || ''
+    });
+
+    if (loginError || !loginData.user) {
+      console.error('Login error after verification:', loginError);
+      res.status(400).json({
+        success: false,
+        message: 'Email verified but login failed: ' + (loginError?.message || 'Unknown error')
+      });
+      return;
+    }
+
+    // Get first name from user metadata
+    const firstName = loginData.user.user_metadata?.first_name || 'User';
+
+    // Send welcome email
+    try {
+      await emailService.sendWelcomeEmail(email, firstName);
+      console.log(`✅ Welcome email sent to ${email}`);
+    } catch (emailError) {
+      console.error('Failed to send welcome email:', emailError);
+      // Continue even if email fails
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Email vérifié avec succès! Votre compte est maintenant actif.',
+      data: {
+        email: loginData.user.email,
+        verified: true,
+        session: loginData.session
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Resend verification code
+ */
+export const resendVerificationCode = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+      return;
+    }
+
+    // Check if there's a pending verification
+    const storedData = verificationService.getStoredData(email);
+    
+    if (!storedData) {
+      res.status(404).json({
+        success: false,
+        message: 'Aucune demande de vérification trouvée. Veuillez vous inscrire à nouveau.'
+      });
+      return;
+    }
+
+    // Resend code
+    const result = verificationService.resendCode(email);
+
+    if (!result.success) {
+      res.status(400).json({
+        success: false,
+        message: result.message
+      });
+      return;
+    }
+
+    // Send new verification email
+    try {
+      await emailService.sendVerificationEmail(email, storedData.firstName, result.code!);
+      console.log(`✅ Verification code resent to ${email}`);
+    } catch (emailError) {
+      console.error('Failed to resend verification email:', emailError);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send email'
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Code de vérification renvoyé! Vérifiez votre email.'
+    });
+
+  } catch (error: any) {
+    console.error('Resend verification error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'

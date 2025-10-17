@@ -16,6 +16,10 @@ router.post('/login', validate(authSchemas.login), authController.login);
 router.post('/logout', verifySupabaseToken, authController.logout);
 router.post('/refresh-tokens', authController.refreshTokens);
 
+// Email verification
+router.post('/verify-email', authController.verifyEmail);
+router.post('/resend-verification', authController.resendVerificationCode);
+
 // Google OAuth
 router.post('/google', authController.googleLogin);
 router.get('/callback', authController.handleOAuthCallback);
