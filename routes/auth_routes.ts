@@ -21,8 +21,8 @@ router.post('/verify-email', authController.verifyEmail);
 router.post('/resend-verification', authController.resendVerificationCode);
 
 // Google OAuth
-router.post('/google', authController.googleLogin);
-router.get('/callback', authController.handleOAuthCallback);
+router.get('/google', authController.googleLogin);
+router.get('/google/callback', authController.handleOAuthCallback);
 
 // ========================
 // PROFILE MANAGEMENT
