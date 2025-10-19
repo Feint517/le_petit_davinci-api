@@ -1,5 +1,6 @@
 import express, { Application, Request, Response, NextFunction } from 'express';
 import { config } from 'dotenv';
+import cors from 'cors';
 import createError from 'http-errors';
 import authRoutes from './routes/auth_routes';
 import userRoutes from './routes/user_routes';
@@ -25,6 +26,38 @@ validateStripeConfig();
 
 //* Initialize Express app
 const app: Application = express();
+
+//* CORS Configuration
+const corsOptions = {
+  origin: function (origin: string | undefined, callback: Function) {
+    // Allow requests with no origin (like mobile apps or Postman)
+    if (!origin) return callback(null, true);
+    
+    const allowedPatterns = [
+      /^http:\/\/localhost(:\d+)?$/,
+      /^http:\/\/10\.0\.2\.2(:\d+)?$/,  // Android emulator
+      /^http:\/\/127\.0\.0\.1(:\d+)?$/,
+      /^https:\/\/lepetitdavinci-api\.vercel\.app$/
+    ];
+    
+    const allowed = allowedPatterns.some(pattern => pattern.test(origin));
+    
+    if (allowed) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+};
+
+//* Apply CORS middleware
+app.use(cors(corsOptions));
 
 //* IMPORTANT: Register webhook routes BEFORE body parser
 //* Webhooks need raw body for signature verification

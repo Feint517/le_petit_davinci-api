@@ -6,14 +6,20 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const initSupabase = (): SupabaseClient => {
     try {
         const supabaseUrl: string = process.env.SUPABASE_URL as string;
-        const supabaseKey: string = process.env.SUPABASE_ANON_KEY as string;
+        // Use service role key for backend operations (bypasses RLS)
+        const supabaseKey: string = process.env.SUPABASE_SERVICE_ROLE_KEY as string;
         
         if (!supabaseUrl || !supabaseKey) {
-            throw new Error('Supabase URL or API key not provided in environment variables');
+            throw new Error('Supabase URL or Service Role key not provided in environment variables');
         }
 
-        const client = createClient(supabaseUrl, supabaseKey);
-        console.log('✅ Supabase client initialized');
+        const client = createClient(supabaseUrl, supabaseKey, {
+            auth: {
+                autoRefreshToken: false,
+                persistSession: false
+            }
+        });
+        console.log('✅ Supabase client initialized with service role');
         return client;
     } catch (err: any) {
         console.log('❌ Supabase initialization error:', err.message);
