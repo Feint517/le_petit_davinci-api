@@ -282,13 +282,11 @@ export const profileSchemas = {
                 'any.required': 'PIN is required'
             }),
         avatar: Joi.string()
-            .pattern(/^[a-zA-Z0-9_\-\.\/]+$/) // Allow alphanumeric with hyphens, underscores, dots, and slashes for paths
-            .max(200)
+            .max(500)
             .optional()
             .allow(null, '')
             .messages({
-                'string.pattern.base': 'Avatar must be a valid identifier or path',
-                'string.max': 'Avatar identifier is too long'
+                'string.max': 'Avatar path is too long'
             })
     }),
 
@@ -323,13 +321,11 @@ export const profileSchemas = {
                 'string.pattern.base': 'Profile name can only contain letters, numbers, spaces, hyphens, and underscores'
             }),
         avatar: Joi.string()
-            .pattern(/^[a-zA-Z0-9_\-\.\/]+$/) // Allow alphanumeric with hyphens, underscores, dots, and slashes for paths
-            .max(200)
+            .max(500)
             .optional()
             .allow(null, '')
             .messages({
-                'string.pattern.base': 'Avatar must be a valid identifier or path',
-                'string.max': 'Avatar identifier is too long'
+                'string.max': 'Avatar path is too long'
             }),
         pin: Joi.string()
             .length(4)
