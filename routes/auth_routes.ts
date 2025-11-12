@@ -51,54 +51,7 @@ router.post('/security/cleanup', verifyAccountAndProfile, authController.cleanup
 router.post('/request-unlock', validate(authSchemas.requestUnlock), authController.requestAccountUnlock);
 router.post('/unlock-account', validate(authSchemas.unlockAccount), authController.unlockAccount);
 
-// ========================
-// LEGACY AUTHENTICATION (DEPRECATED - COMMENTED OUT)
-// ========================
-
-/*
-// User registration
-router.post('/register-legacy', validate(authSchemas.register), authController.registerLegacy);
-
-// Login process - Multi-step authentication
-// Step 1: Validate email and password
-router.post('/validate-credentials', validate(authSchemas.login), authController.validateCredentials);
-
-// Step 2: Validate PIN
-router.post('/validate-pin', validate(authSchemas.validatePin), authController.validatePin);
-
-// Step 3: Validate GeoLocation
-router.post('/validate-location', validate(authSchemas.validateLocation), authController.validateGeoLocation);
-
-// Authentication management
-router.post('/logout-legacy', validate(authSchemas.refreshToken), authController.logoutLegacy);
-router.post('/check-refresh-token', validate(authSchemas.refreshToken), authController.checkRefreshToken);
-router.post('/refresh-tokens-legacy', validate(authSchemas.refreshToken), authController.refreshTokensFixed);
-
-// Protected routes (require legacy authentication)
-router.put('/change-password', verifyAccessToken, validate(authSchemas.changePassword), authController.changePassword);
-*/
-
-// ========================
-// AUTH0 AUTHENTICATION (DEPRECATED - COMMENTED OUT)
-// ========================
-
-/*
-// Auth0 callback handler (processes Auth0 user after authentication)
-router.post('/auth0/callback', verifyAuth0Token, authController.auth0Callback);
-
-// User profile management (Auth0 protected routes)
-router.get('/profile-auth0', verifyAuth0Token, authController.getProfileAuth0);
-router.put('/profile-auth0', verifyAuth0Token, authController.updateProfileAuth0);
-router.post('/profile/sync', verifyAuth0Token, authController.syncAuth0Profile);
-
-// Account management
-router.delete('/account-auth0', verifyAuth0Token, authController.deleteAccountAuth0);
-*/
-
-// ========================
-// PUBLIC ROUTES
-// ========================
-
+ 
 // Health check
 router.get('/health', (req, res) => {
   res.status(200).json({

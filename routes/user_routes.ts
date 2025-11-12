@@ -1,7 +1,5 @@
 import express, { Router, Request, Response } from 'express';
-import { verifySupabaseToken } from '../middlewares/auth';
-// import { verifyAccessToken } from '../middlewares/auth'; // DEPRECATED
-// import * as userController from '../controllers/user_controller';
+import { verifySupabaseToken } from '../middlewares/auth'; 
 
 const router: Router = express.Router();
 
